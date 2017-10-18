@@ -349,8 +349,7 @@ static void e1000_irq_enable(struct e1000_adapter *adapter)
 	if (adapter->msix_entries) {
 		ew32(EIAC_82574, adapter->eiac_mask & E1000_EIAC_MASK_82574);
 		ew32(IMS, adapter->eiac_mask | E1000_IMS_LSC);
-	} else if ((hw->mac.type == e1000_pch_lpt) ||
-			   (hw->mac.type == e1000_pch_spt)) {
+	} else if (hw->mac.type >= e1000_pch_lpt) {
 		ew32(IMS, IMS_ENABLE_MASK | E1000_IMS_ECCER);
 	} else {
 		ew32(IMS, IMS_ENABLE_MASK);
@@ -881,7 +880,7 @@ void e1000e_reset(struct e1000_adapter *adapter)
 		}
 	}
 
-	if (hw->mac.type == e1000_pch_spt)
+	if (hw->mac.type >= e1000_pch_spt)
 		e1000_flush_desc_rings(adapter);
 	/* Allow time for pending master requests to run */
 	mac->ops.reset_hw(hw);
@@ -969,7 +968,7 @@ void e1000e_reset(struct e1000_adapter *adapter)
 		phy_data &= ~IGP02E1000_PM_SPD;
 		e1e_wphy(hw, IGP02E1000_PHY_POWER_MGMT, phy_data);
 	}
-	if (hw->mac.type == e1000_pch_spt && adapter->int_mode == 0) {
+	if (hw->mac.type >= e1000_pch_spt && adapter->int_mode == 0) {
 		u32 reg;
 		/* Fextnvm7 @ 0xe4[2] = 1 */
 		reg = er32(FEXTNVM7);
@@ -1058,16 +1057,16 @@ static int e1000e_write_uc_addr_list(struct net_device *netdev)
 		 * combining
 		 */
 		netdev_for_each_uc_addr(ha, netdev) {
-			int rval;
+			int ret_val;
 			
 			if (!rar_entries)
 				break;
 #ifdef NETDEV_HW_ADDR_T_UNICAST
-			rval = hw->mac.ops.rar_set(hw, ha->addr, rar_entries--);
+			ret_val = hw->mac.ops.rar_set(hw, ha->addr, rar_entries--);
 #else
-			rval = hw->mac.ops.rar_set(hw, ha->da_addr, rar_entries--);
+			ret_val = hw->mac.ops.rar_set(hw, ha->da_addr, rar_entries--);
 #endif
-			if (rval < 0)
+			if (ret_val < 0)
 				return -ENOMEM;
 			count++;
 		}
@@ -1086,7 +1085,7 @@ static int e1000e_write_uc_addr_list(struct net_device *netdev)
 #endif /* HAVE_SET_RX_MODE */
 
 /**
- * e1000e_vlan_strip_enable - helper to disable HW VLAN stripping
+ * e1000e_vlan_strip_disable - helper to disable HW VLAN stripping
  * @adapter: board private structure to initialize
  **/
 static void e1000e_vlan_strip_disable(struct e1000_adapter *adapter)
@@ -2149,7 +2148,7 @@ bool AppleIntelE1000e::start(IOService* provider)
 	int err, i;
 	u16 eeprom_data = 0;
 	u16 eeprom_apme_mask = E1000_EEPROM_APME;
-	s32 rval = 0;
+	s32 ret_val = 0;
 	struct e1000_adapter *adapter = &priv_adapter;
 	struct e1000_hw *hw = &adapter->hw;
 
@@ -2218,7 +2217,7 @@ bool AppleIntelE1000e::start(IOService* provider)
             e1000e_disable_aspm(pciDevice, aspm_disable_flag);
 		
 
-		/* Workaround FLR issues for 82572
+		/* Workaround FLR issues for 82579
 		 * This code disables the FLR (Function Level Reset) via PCIe, in order
 		 * to workaround a bug found while using device passthrough, where the
 		 * interface would become non-responsive.
@@ -2341,18 +2340,18 @@ bool AppleIntelE1000e::start(IOService* provider)
 		} else if (adapter->flags & FLAG_APME_IN_CTRL3) {
 			if (adapter->flags & FLAG_APME_CHECK_PORT_B &&
 				(adapter->hw.bus.func == 1))
-				rval = e1000_read_nvm(&adapter->hw,
+				ret_val = e1000_read_nvm(&adapter->hw,
 									  NVM_INIT_CONTROL3_PORT_B,
 									  1, &eeprom_data);
 			else
-				rval = e1000_read_nvm(&adapter->hw,
+				ret_val = e1000_read_nvm(&adapter->hw,
 									  NVM_INIT_CONTROL3_PORT_A,
 									  1, &eeprom_data);
 		}
 		
 		/* fetch WoL from EEPROM */
-		if (rval)
-			e_dbg("NVM read error getting WoL initial values: %d\n", rval);
+		if (ret_val)
+			e_dbg("NVM read error getting WoL initial values: %d\n", ret_val);
 		else if (eeprom_data & eeprom_apme_mask)
 			adapter->eeprom_wol |= E1000_WUFC_MAG;
 		
@@ -2385,12 +2384,17 @@ bool AppleIntelE1000e::start(IOService* provider)
 			/*device_wakeup_enable(pci_dev_to_dev(pdev))*/;
 		
 		/* save off EEPROM version number */
-		rval = e1000_read_nvm(&adapter->hw, 5, 1, &adapter->eeprom_vers);
+		ret_val = e1000_read_nvm(&adapter->hw, 5, 1, &adapter->eeprom_vers);
 
-		if (rval) {
-			e_dbg("NVM read error getting EEPROM version: %d\n", rval);
+		if (ret_val) {
+			e_dbg("NVM read error getting EEPROM version: %d\n", ret_val);
 			adapter->eeprom_vers = 0;
 		}
+
+#if 0
+		/* init PTP hardware clock */
+		e1000e_ptp_init(adapter);
+#endif
 		
 		/* reset the hardware with the new settings */
 		e1000e_reset(adapter);
@@ -2401,10 +2405,6 @@ bool AppleIntelE1000e::start(IOService* provider)
 		 */
 		if (!(adapter->flags & FLAG_HAS_AMT))
 			e1000e_get_hw_control(adapter);
-#if 0
-		/* init PTP hardware clock */
-		e1000e_ptp_init(adapter);
-#endif
 		
 		success = true;
 	} while(false);
@@ -2714,13 +2714,13 @@ void AppleIntelE1000e::e1000e_down(bool reset)
 	if (!pci_channel_offline(adapter->pdev)) {
 		if (reset)
 			e1000e_reset(adapter);
-		else if (hw->mac.type == e1000_pch_spt)
+		else if (hw->mac.type >= e1000_pch_spt)
 			e1000_flush_desc_rings(adapter);
 	}
 #else
 	if (reset)
 		e1000e_reset(adapter);
-	else if (hw->mac.type == e1000_pch_spt)
+	else if (hw->mac.type >= e1000_pch_spt)
 		e1000_flush_desc_rings(adapter);
 #endif
 	e1000_clean_tx_ring();
@@ -2732,51 +2732,38 @@ void AppleIntelE1000e::e1000e_down(bool reset)
  * e1000e_cyclecounter_read - read raw cycle counter (used by time counter)
  * @cc: cyclecounter structure
  **/
-static cycle_t e1000e_cyclecounter_read(const struct cyclecounter *cc)
+static u64 e1000e_cyclecounter_read(const struct cyclecounter *cc)
 {
 	struct e1000_adapter *adapter = container_of(cc, struct e1000_adapter,
-												 cc);
+						     cc);
 	struct e1000_hw *hw = &adapter->hw;
-	cycle_t systim, systim_next;
-	/* SYSTIMH latching upon SYSTIML read does not work well. to fix that
-	 * we don't want to allow overflow of SYSTIML and a change to SYSTIMH
-	 * to occur between reads, so if we read a vale close to overflow, we
-	 * wait for overflow to occur and read both registers when its safe.
-	 * clock on pch_lpt HW is 100 MHz. on pch_spt and other parts,
-	 * its 24 MHz, hence the different number of cycles to wait.
+	u32 systimel, systimeh;
+	u64 systim;
+	/* SYSTIMH latching upon SYSTIML read does not work well.
+	 * This means that if SYSTIML overflows after we read it but before
+	 * we read SYSTIMH, the value of SYSTIMH has been incremented and we
+	 * will experience a huge non linear increment in the systime value
+	 * to fix that we test for overflow and if true, we re-read systime.
 	 */
-	u32 systim_overflow_latch_fix = 0x3FFFFFFF;
-	
-	do {
-		systim = (cycle_t)er32(SYSTIML);
-	} while (systim > systim_overflow_latch_fix);
-	systim |= (cycle_t)er32(SYSTIMH) << 32;
-	
-	if ((hw->mac.type == e1000_82574) || (hw->mac.type == e1000_82583)) {
-		u64 incvalue, time_delta, rem, temp;
-		int i;
-		
-		/* errata for 82574/82583 possible bad bits read from SYSTIMH/L
-		 * check to see that the time is incrementing at a reasonable
-		 * rate and is a multiple of incvalue
-		 */
-		incvalue = er32(TIMINCA) & E1000_TIMINCA_INCVALUE_MASK;
-		for (i = 0; i < E1000_MAX_82574_SYSTIM_REREADS; i++) {
-			/* latch SYSTIMH on read of SYSTIML */
-			systim_next = (cycle_t)er32(SYSTIML);
-			systim_next |= (cycle_t)er32(SYSTIMH) << 32;
-			
-			time_delta = systim_next - systim;
-			temp = time_delta;
-			rem = do_div(temp, incvalue);
-			
-			systim = systim_next;
-			
-			if ((time_delta < E1000_82574_SYSTIM_EPSILON) &&
-			    (rem == 0))
-				break;
+	systimel = er32(SYSTIML);
+	systimeh = er32(SYSTIMH);
+	/* Is systimel is so large that overflow is possible? */
+	if (systimel >= (u32)0xffffffff - E1000_TIMINCA_INCVALUE_MASK) {
+		u32 systimel_2 = er32(SYSTIML);
+		if (systimel > systimel_2) {
+			/* There was an overflow, read again SYSTIMH, and use
+			 * systimel_2
+			 */
+			systimeh = er32(SYSTIMH);
+			systimel = systimel_2;
 		}
 	}
+	systim = (u64)systimel;
+	systim |= (u64)systimeh << 32;
+
+	if (adapter->flags2 & FLAG2_CHECK_SYSTIM_OVERFLOW)
+		systim = e1000e_sanitize_systim(hw, systim);
+
 	return systim;
 }
 #endif /* HAVE_HW_TIME_STAMP */
@@ -3204,8 +3191,7 @@ void AppleIntelE1000e::interruptOccurred(IOInterruptEventSource * src)
 	}
 	
 	/* Reset on uncorrectable ECC error */
-	if ((icr & E1000_ICR_ECCER) && ((hw->mac.type == e1000_pch_lpt) ||
-									(hw->mac.type == e1000_pch_spt))) {
+	if ((icr & E1000_ICR_ECCER) && (hw->mac.type >= e1000_pch_lpt)) {
 		u32 pbeccsts = er32(PBECCSTS);
 		
 		adapter->corr_errors +=
@@ -3410,7 +3396,9 @@ void AppleIntelE1000e::e1000_configure_tx()
 		ew32(IOSFPC, reg_val);
 		
 		reg_val = er32(TARC(0));
-		reg_val |= E1000_TARC0_CB_MULTIQ_3_REQ;
+		/* SPT and KBL Si errata workaround to avoid Tx hang */
+		reg_val &= ~BIT(28);
+		reg_val |= BIT(29);
 		ew32(TARC(0), reg_val);
 	}
 }
@@ -4894,8 +4882,7 @@ s32 e1000e_get_base_timinca(struct e1000_adapter *adapter, u32 *timinca)
 	/* Make sure clock is enabled on I217/I218/I219  before checking
 	 * the frequency
 	 */
-	if (((hw->mac.type == e1000_pch_lpt) ||
-	     (hw->mac.type == e1000_pch_spt)) &&
+	if ((hw->mac.type >= e1000_pch_lpt) &&
 	    !(er32(TSYNCTXCTL) & E1000_TSYNCTXCTL_ENABLED) &&
 	    !(er32(TSYNCRXCTL) & E1000_TSYNCRXCTL_ENABLED)) {
 		u32 fextnvm7 = er32(FEXTNVM7);
@@ -4908,27 +4895,33 @@ s32 e1000e_get_base_timinca(struct e1000_adapter *adapter, u32 *timinca)
 	
 	switch (hw->mac.type) {
 		case e1000_pch2lan:
+			/* Stable 96MHz frequency */
+			incperiod = INCPERIOD_96MHZ;
+			incvalue = INCVALUE_96MHZ;
+			shift = INCVALUE_SHIFT_96MHZ;
+			adapter->cc.shift = shift + INCPERIOD_SHIFT_96MHZ;
+			break;
 		case e1000_pch_lpt:
 			if (er32(TSYNCRXCTL) & E1000_TSYNCRXCTL_SYSCFI) {
 				/* Stable 96MHz frequency */
-				incperiod = INCPERIOD_96MHz;
-				incvalue = INCVALUE_96MHz;
-				shift = INCVALUE_SHIFT_96MHz;
-				adapter->cc.shift = shift + INCPERIOD_SHIFT_96MHz;
+				incperiod = INCPERIOD_96MHZ;
+				incvalue = INCVALUE_96MHZ;
+				shift = INCVALUE_SHIFT_96MHZ;
+				adapter->cc.shift = shift + INCPERIOD_SHIFT_96MHZ;
 			} else {
 				/* Stable 96MHz frequency */
-				incperiod = INCPERIOD_25MHz;
-				incvalue = INCVALUE_25MHz;
-				shift = INCVALUE_SHIFT_25MHz;
+				incperiod = INCPERIOD_25MHZ;
+				incvalue = INCVALUE_25MHZ;
+				shift = INCVALUE_SHIFT_25MHZ;
 				adapter->cc.shift = shift;
 			}
 			break;
 		case e1000_pch_spt:
 			if (er32(TSYNCRXCTL) & E1000_TSYNCRXCTL_SYSCFI) {
 				/* Stable 96MHz frequency */
-				incperiod = INCPERIOD_24MHz;
-				incvalue = INCVALUE_24MHz;
-				shift = INCVALUE_SHIFT_24MHz;
+				incperiod = INCPERIOD_24MHZ;
+				incvalue = INCVALUE_24MHZ;
+				shift = INCVALUE_SHIFT_24MHZ;
 				adapter->cc.shift = shift;
 				break;
 			} else
@@ -4937,9 +4930,9 @@ s32 e1000e_get_base_timinca(struct e1000_adapter *adapter, u32 *timinca)
 		case e1000_82574:
 		case e1000_82583:
 			/* Stable 25MHz frequency */
-			incperiod = INCPERIOD_25MHz;
-			incvalue = INCVALUE_25MHz;
-			shift = INCVALUE_SHIFT_25MHz;
+			incperiod = INCPERIOD_25MHZ;
+			incvalue = INCVALUE_25MHZ;
+			shift = INCVALUE_SHIFT_25MHZ;
 			adapter->cc.shift = shift;
 			break;
 		default:
@@ -5500,8 +5493,7 @@ int AppleIntelE1000e::__e1000_shutdown(bool runtime)
 	
 	if (adapter->hw.phy.type == e1000_phy_igp_3) {
 		e1000e_igp3_phy_powerdown_workaround_ich8lan(&adapter->hw);
-	} else if ((hw->mac.type == e1000_pch_lpt) ||
-			   (hw->mac.type == e1000_pch_spt)) {
+	} else if (hw->mac.type >= e1000_pch_lpt) {
 		if (!(wufc & (E1000_WUFC_EX | E1000_WUFC_MC | E1000_WUFC_BC)))
 			/* ULP does not support wake from unicast, multicast
 			 * or broadcast.

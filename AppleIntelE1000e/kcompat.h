@@ -73,6 +73,9 @@
 #define ALIGN(x,a) (((x)+(a)-1)&~((a)-1))
 
 #define BITS_PER_LONG   32
+#ifndef	BIT
+#define	BIT(n)	(1<<(n))
+#endif
 
 #define BITS_TO_LONGS(bits) \
 (((bits)+BITS_PER_LONG-1)/BITS_PER_LONG)
